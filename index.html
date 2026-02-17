@@ -271,6 +271,10 @@
     transform-origin: center center;
   }
 </style>
+  .lage-cell.mapping-active {
+    outline: 4px solid rgb(200,200,50);
+    outline-offset: -4px;
+  }
 </style>
 </head>
 
@@ -344,6 +348,7 @@
   function startMappingMode() {
     document.getElementById("notation").style.visibility = "hidden";
     mappingArea.style.display = "block";
+    document.querySelector(".lage-cell").classList.add("mapping-active");
 
     mappingText.textContent = "Augen schließen – konzentrieren.";
     mappingHint.textContent = "Bitte nimm nach jedem Ton die Hand vom Klavier, sodass du dich immer neu orientieren musst. Drücke nun eine beliebige Taste, wenn du bereit bist.";
@@ -352,16 +357,16 @@
     mappingReady = true;
     mappingLocked = false;
     lastPlayedNote = null;
-
-    speak("Bitte nimm nach jedem Ton die Hand vom Klavier, sodass du dich immer neu orientieren musst. Drücke nun eine beliebige Taste, wenn du bereit bist.");
   }
 
   function stopMappingMode() {
     mappingArea.style.display = "none";
+    document.querySelector(".lage-cell").classList.remove("mapping-active");
     document.getElementById("notation").style.visibility = "visible";
   }
 
-  let bestVoice = null;
+let bestVoice = null;
+const audioCache = {};
 
   function loadVoices() {
     const voices = speechSynthesis.getVoices();
@@ -377,85 +382,105 @@
   speechSynthesis.onvoiceschanged = loadVoices;
   loadVoices();
 
-  // --- Replace speak(text) with ElevenLabs API version ---
+  // --- Local audio playback for speak(text) ---
   async function speak(text) {
-    // --- CHARACTER-BASED DAILY & MONTHLY LIMIT LOGIC ---
-    const today = new Date().toDateString();
+    const mapping = {
+      "Spiele das": "spiele_das.mp3",
+      "C": "ton_c.mp3",
+      "D": "ton_d.mp3",
+      "E": "ton_e.mp3",
+      "F": "ton_f.mp3",
+      "G": "ton_g.mp3",
+      "A": "ton_a.mp3",
+      "B": "ton_b.mp3",
+      "mit der rechten Hand": "mit_der_rechten_hand.mp3",
+      "mit der linken Hand": "mit_der_linken_hand.mp3",
+      "aus der": "aus_der.mp3",
+      "C-Lage": "c_lage.mp3",
+      "D-Lage": "d_lage.mp3",
+      "E-Lage": "e_lage.mp3",
+      "F-Lage": "f_lage.mp3",
+      "G-Lage": "g_lage.mp3",
+      "A-Lage": "a_lage.mp3",
+      "B-Lage": "b_lage.mp3",
+      "Richtig": "richtig.mp3",
+      "Falsch": "falsch.mp3",
+      "Ziel war": "ziel_war.mp3",
+      "Weiter nach links": "weiter_nach_links.mp3",
+      "Weiter nach rechts": "weiter_nach_rechts.mp3"
+    };
 
-    if (!lastLimitReset) lastLimitReset = today;
+    // Local directory for audio files
+    const base = "./"; // adjust if files are in a subfolder
 
-    if (lastLimitReset !== today) {
-      lastLimitReset = today;
-      dailyCharactersUsed = 0;
+    // If cached, play
+    if (audioCache[text]) {
+      try {
+        const audio = audioCache[text];
+        await new Promise(resolve => {
+          audio.onended = resolve;
+          audio.play();
+        });
+        return;
+      } catch(e) {
+        console.warn("Cached audio defekt, lade neu.", e);
+      }
     }
 
-    const chars = text.length;
-
-    if (monthlyCharactersUsed + chars > monthlyCharacterLimit) {
-      mappingText.textContent = "Monatslimit erreicht – bitte im nächsten Monat weiter üben.";
-      mappingHint.textContent = "";
-      updateRemainingDisplay();
+    // Resolve filename
+    const file = mapping[text];
+    if (!file) {
+      console.warn("Kein lokaler Audio-Baustein für:", text);
       return;
     }
 
-    if (dailyCharactersUsed + chars > dailyCharacterLimit) {
-      mappingText.textContent = "Tageslimit erreicht – bitte morgen weiter üben.";
-      mappingHint.textContent = "";
-      updateRemainingDisplay();
-      return;
-    }
+    const audio = new Audio(base + file);
+    audioCache[text] = audio;
 
-    dailyCharactersUsed += chars;
-    monthlyCharactersUsed += chars;
-    updateRemainingDisplay();
+    await new Promise(resolve => {
+      audio.onended = resolve;
+      audio.play();
+    });
+    return;
+  }
 
-    const apiKey = "ce21fc91167973a89fe680ccd4f4b6c91939bb19e63a747e87f187fa762d6dec";
-    const voiceId = "vYorH5iVh5bdZgV1vvMz";
-    const modelId = "eleven_multilingual_v2";
-
-    try {
-       const resp = await fetch(
-         `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-         {
-           method: "POST",
-           headers: {
-             "xi-api-key": apiKey,
-             "Content-Type": "application/json"
-           },
-           body: JSON.stringify({
-             text: text,
-             model_id: modelId,
-             output_format: "mp3_44100_128"
-           })
-         }
-       );
-
-       if (!resp.ok) throw new Error("ElevenLabs API Fehler: " + resp.status);
-
-       const blob = await resp.blob();
-       const url = URL.createObjectURL(blob);
-       const audio = new Audio(url);
-       await audio.play();
-       URL.revokeObjectURL(url);
-     } catch (err) {
-       console.warn("ElevenLabs fehlgeschlagen.", err);
-     }
-   }
-
-  let currentTarget = null;
-  const mappingNotes = ["C4","D4","E4","F4","G4","A4","B4"];
+let currentTarget = null;
+const mappingNotes = [
+  "C3","D3","E3","F3","G3","A3","B3",
+  "C4","D4","E4","F4","G4","A4","B4",
+  "C5","D5","E5","F5","G5","A5","B5"
+];
 
   function nextMappingNote() {
-    const idx = Math.floor(Math.random()*mappingNotes.length);
-    currentTarget = mappingNotes[idx];
+      if (typeof nextMappingNote.lageCounter === "undefined") {
+        nextMappingNote.lageCounter = 0;
+      }
+      const currentLage = lageList[nextMappingNote.lageCounter];
+    const available = lageNotes[currentLage];
+    const idx = Math.floor(Math.random() * available.length);
+    currentTarget = available[idx].toUpperCase() + "4";
 
-    const currentLage = lageList[lageIndex];
-    const spokenText = `Spiele das ${currentTarget.replace("4","")} aus der ${currentLage}-Lage`;
+    // --- NEW: choose a hand randomly ---
+    const handOptions = ["Rechten Hand", "Linken Hand"];
+    const chosenHand = handOptions[Math.floor(Math.random() * handOptions.length)];
 
-    mappingText.textContent = spokenText;
+    const noteLetter = currentTarget.replace(/[0-9]/g, "");
+    const handPhrase = (chosenHand === "Rechten Hand") ? "mit der rechten Hand" : "mit der linken Hand";
+    const lagePhrase = currentLage + "-Lage";
+
+    mappingText.textContent =
+      `Spiele das ${noteLetter} ${handPhrase} aus der ${currentLage}-Lage`;
+    nextMappingNote.lageCounter = (nextMappingNote.lageCounter + 1) % lageList.length;
     mappingHint.textContent = "";
+    nextMappingNote.lageCounter = (nextMappingNote.lageCounter + 1) % lageList.length;
 
-    setTimeout(() => speak(spokenText), 2000);
+    setTimeout(async () => {
+      await speak("Spiele das");
+      await speak(noteLetter);
+      await speak(handPhrase);
+      await speak("aus der");
+      await speak(lagePhrase);
+    }, 2000);
   }
 
   function mappingHintFor(played, target) {
@@ -463,12 +488,27 @@
     const p = arr.indexOf(played);
     const t = arr.indexOf(target);
     if (p < 0 || t < 0) return "";
-    if (p < t) return "Weiter nach rechts";
-    if (p > t) return "Weiter nach links";
-    return "";
+
+    // Determine current chosen hand text from the last generated instruction
+    const txt = mappingText.textContent.toLowerCase();
+    const isLeft = txt.includes("linken hand");
+    const isRight = txt.includes("rechten hand");
+
+    // Base direction
+    let dir = "";
+    if (p < t) dir = "Weiter nach rechts";
+    if (p > t) dir = "Weiter nach links";
+
+    // Invert for left hand
+    if (isLeft) {
+      if (dir === "Weiter nach rechts") return "Weiter nach links";
+      if (dir === "Weiter nach links") return "Weiter nach rechts";
+    }
+
+    return dir;
   }
 
-  function handleMappingPress(playedNote) {
+  async function handleMappingPress(playedNote) {
     if (mappingLocked) return;
     mappingLocked = true;
     if (mappingReady) {
@@ -478,12 +518,6 @@
       nextMappingNote();
       return;
     }
-    // Guard: Ignore repeated processing of the same note
-    if (playedNote === currentTarget && window._lastProcessedNote === playedNote) {
-      mappingLocked = false;
-      return;
-    }
-    window._lastProcessedNote = playedNote;
     if (!mappingMode) {
       mappingLocked = false;
       return;
@@ -496,11 +530,13 @@
         lastPlayedNote = null;
       }, 2000);
     } else {
-      speak("Falsch. Ziel war " + currentTarget);
+      await speak("Falsch");
+      await speak("Ziel war");
+      await speak(currentTarget.replace(/[0-9]/g, ""));
       const hint = mappingHintFor(playedNote, currentTarget);
       mappingHint.textContent = hint;
-      setTimeout(() => {
-        speak(hint);
+      setTimeout(async () => {
+        await speak(hint);
         mappingLocked = false;
         lastPlayedNote = null;
       }, 2000);
@@ -614,6 +650,7 @@ let lageIndex = 0;
   // --------- MIDI SETUP ----------
   let midiAccess = null;
   let lastNote = null;
+  let mappingNoteIsDown = false;
 
   // SWIFT → JS bridge so Swift can call MIDI handler
   window.handleMIDIMessage = function(status, data1, data2) {
@@ -625,9 +662,23 @@ let lageIndex = 0;
     const [command, note, velocity] = event.data;
 
     if (mappingMode) {
+      // MIDI command structure: 144 = note on, 128 = note off
+      const isNoteOn = (command === 144 && velocity > 0);
+      const isNoteOff = (command === 128 || (command === 144 && velocity === 0));
+
+      // On note-off, re‑enable mapping detection
+      if (isNoteOff) {
+        mappingNoteIsDown = false;
+        return;
+      }
+
+      // On note-on: process ONLY if previously released
+      if (isNoteOn) {
+        if (mappingNoteIsDown) return;
+        mappingNoteIsDown = true;
+      }
+
       const played = midiToNote(note) + "4";
-      if (played === lastPlayedNote) return;
-      lastPlayedNote = played;
       handleMappingPress(played);
       return;
     }
